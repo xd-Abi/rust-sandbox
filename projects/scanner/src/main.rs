@@ -1,6 +1,6 @@
-use std::sync::Arc;
-
+use std::sync::{Arc, Mutex};
 use clap::{arg, command, Parser};
+use indicatif::{ProgressBar, ProgressStyle};
 use tokio::{net::TcpStream, sync::Semaphore, task, time::{timeout, Duration}};
 
 #[derive(Parser, Debug)]
@@ -23,21 +23,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = Arc::new(args.target);
     let concurrency_limit =  Arc::new(Semaphore::new(args.concurrency));
     let range = parse_port_range(&args.ports);
+    
+    let open_ports = Arc::new(Mutex::new(Vec::new()));
     let mut tasks = vec![];
-
-    println!("🔍 Scanning {} on ports {} with max {} concurrent scans...", target, args.ports, args.concurrency);
+    
+    let progress = ProgressBar::new(range.len() as u64);
+    progress.set_style(ProgressStyle::default_bar()
+        .template("⏳ Scanning {wide_bar} {pos}/{len} ports...")
+        .unwrap());
 
     for &port in &range {
         let target = Arc::clone(&target);
         let concurrency_limit = Arc::clone(&concurrency_limit);
+        let progress = progress.clone();
+        let open_ports = Arc::clone(&open_ports);
 
         tasks.push(task::spawn(async move {
             let _permit = concurrency_limit.acquire().await.unwrap();
             if is_port_open(&target, port).await {
-                println!("✅ Port {} is open!", port);
-            } else {
-                println!("❌ Port {} is closed!", port);
+                let mut ports = open_ports.lock().unwrap();
+                ports.push(port);
             }
+
+            progress.inc(1);
         }));
     }
 
@@ -45,7 +53,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = task.await?;
     }
 
-    println!("Scan complete.");
+    progress.finish_and_clear();
+    let open_ports = open_ports.lock().unwrap();
+    if open_ports.is_empty() {
+        println!("✅ Scan complete. No open ports found.");
+    } else {
+        println!("✅ Scan complete. Open ports found: {:?}", open_ports);
+    }
 
     Ok(())
 }
