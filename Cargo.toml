@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
-members = [ "projects/guessing-game",
+members = [ 
+    "projects/file-tree", 
+    "projects/guessing-game",
     "projects/scanner",
 ]
